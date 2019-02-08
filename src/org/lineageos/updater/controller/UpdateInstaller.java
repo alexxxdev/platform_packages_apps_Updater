@@ -22,7 +22,6 @@ import android.os.SystemProperties;
 import android.support.v7.preference.PreferenceManager;
 import android.util.Log;
 
-import org.lineageos.updater.R;
 import org.lineageos.updater.misc.Constants;
 import org.lineageos.updater.misc.FileUtils;
 import org.lineageos.updater.misc.Utils;
@@ -95,6 +94,17 @@ class UpdateInstaller {
         }
     }
 
+    void localInstall(String path){
+        File file = new File(path);
+        if (Utils.isEncrypted(mContext, file)) {
+            // uncrypt rewrites the file so that it can be read without mounting
+            // the filesystem, so create a copy of it.
+           // prepareForUncryptAndInstall(file);
+        } else {
+            installPackage(file);
+        }
+    }
+
     private void installPackage(File update, String downloadId) {
         try {
             android.os.RecoverySystem.installPackage(mContext, update);
@@ -103,6 +113,15 @@ class UpdateInstaller {
             mUpdaterController.getActualUpdate(downloadId)
                     .setStatus(UpdateStatus.INSTALLATION_FAILED);
             mUpdaterController.notifyUpdateChange(downloadId);
+        }
+    }
+
+    private void installPackage(File update) {
+        try {
+            android.os.RecoverySystem.installPackage(mContext, update);
+        } catch (Exception e) {
+            Log.e(TAG, "Could not install update", e);
+            mUpdaterController.notifyLocalInstallUpdateChangeFailed(update.getPath());
         }
     }
 

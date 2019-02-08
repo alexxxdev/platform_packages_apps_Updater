@@ -173,6 +173,13 @@ public class Utils {
         context.startService(intent);
     }
 
+    public static void triggerUpdateWithPath(Context context, String path) {
+        final Intent intent = new Intent(context, UpdaterService.class);
+        intent.setAction(UpdaterService.ACTION_INSTALL_UPDATE);
+        intent.putExtra(UpdaterService.EXTRA_PATH, path);
+        context.startService(intent);
+    }
+
     public static boolean isNetworkAvailable(Context context) {
         ConnectivityManager cm = (ConnectivityManager) context.getSystemService(
                 Context.CONNECTIVITY_SERVICE);

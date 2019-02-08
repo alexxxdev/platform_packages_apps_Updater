@@ -15,22 +15,36 @@
  */
 package org.lineageos.updater;
 
+import android.annotation.NonNull;
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
+import android.content.res.Resources;
+import android.database.Cursor;
+import android.database.DatabaseUtils;
 import android.icu.text.DateFormat;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Debug;
+import android.os.Environment;
 import android.os.IBinder;
+import android.provider.DocumentsContract;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.support.design.widget.AppBarLayout;
 import android.support.design.widget.CollapsingToolbarLayout;
 import android.support.design.widget.Snackbar;
 import android.support.v4.content.LocalBroadcastManager;
+import android.support.v4.provider.DocumentFile;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.preference.PreferenceManager;
 import android.support.v7.widget.LinearLayoutManager;
@@ -54,13 +68,18 @@ import org.lineageos.updater.controller.UpdaterService;
 import org.lineageos.updater.download.DownloadClient;
 import org.lineageos.updater.misc.BuildInfoUtils;
 import org.lineageos.updater.misc.Constants;
+import org.lineageos.updater.misc.FileUtils;
 import org.lineageos.updater.misc.StringGenerator;
 import org.lineageos.updater.misc.Utils;
 import org.lineageos.updater.model.UpdateInfo;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
@@ -74,6 +93,8 @@ public class UpdatesActivity extends UpdatesListActivity {
 
     private View mRefreshIconView;
     private RotateAnimation mRefreshAnimation;
+
+    private static final int READ_REQUEST_CODE = 42;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -104,6 +125,10 @@ public class UpdatesActivity extends UpdatesListActivity {
                 } else if (UpdaterController.ACTION_UPDATE_REMOVED.equals(intent.getAction())) {
                     String downloadId = intent.getStringExtra(UpdaterController.EXTRA_DOWNLOAD_ID);
                     mAdapter.removeItem(downloadId);
+                } else if(UpdaterController.ACTION_LOCAL_UPDATE_FAILED.equals(intent.getAction())){
+                    showSnackbar(R.string.update_failed_channel_title, Snackbar.LENGTH_LONG);
+                } else if (UpdaterController.ACTION_LOCAL_UPDATE_SUCCESS.equals(intent.getAction())){
+                    showSnackbar(R.string.installing_update_finished, Snackbar.LENGTH_LONG);
                 }
             }
         };
@@ -170,6 +195,8 @@ public class UpdatesActivity extends UpdatesListActivity {
         intentFilter.addAction(UpdaterController.ACTION_DOWNLOAD_PROGRESS);
         intentFilter.addAction(UpdaterController.ACTION_INSTALL_PROGRESS);
         intentFilter.addAction(UpdaterController.ACTION_UPDATE_REMOVED);
+        intentFilter.addAction(UpdaterController.ACTION_LOCAL_UPDATE_FAILED);
+        intentFilter.addAction(UpdaterController.ACTION_LOCAL_UPDATE_SUCCESS);
         LocalBroadcastManager.getInstance(this).registerReceiver(mBroadcastReceiver, intentFilter);
     }
 
@@ -204,6 +231,9 @@ public class UpdatesActivity extends UpdatesListActivity {
                         Uri.parse(Utils.getChangelogURL(this)));
                 startActivity(openUrl);
                 return true;
+            }
+            case R.id.menu_local_instrall: {
+                performFileSearch();
             }
         }
         return super.onOptionsItemSelected(item);
@@ -447,5 +477,78 @@ public class UpdatesActivity extends UpdatesListActivity {
                     mUpdaterService.getUpdaterController().setPerformanceMode(enableABPerfMode);
                 })
                 .show();
+    }
+
+    private void performFileSearch() {
+        Intent chooseFile;
+        Intent intent;
+        chooseFile = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        chooseFile.setType("application/zip");
+        intent = Intent.createChooser(chooseFile, "Choose a file");
+        startActivityForResult(intent, READ_REQUEST_CODE);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent resultData) {
+        if (requestCode == READ_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
+            Uri uri = null;
+            if (resultData != null) {
+                uri = resultData.getData();
+                startLocalInstall(uri);
+            }
+        }
+        super.onActivityResult(requestCode, resultCode, resultData);
+    }
+
+    private void startLocalInstall(Uri uri) {
+        String path = FileUtils.getRealPath(this, uri);
+        getInstallDialog(path).show();
+    }
+
+    private AlertDialog.Builder getInstallDialog(final String path) {
+        if (!isBatteryLevelOk()) {
+            Resources resources = getResources();
+            String message = resources.getString(R.string.dialog_battery_low_message_pct,
+                    resources.getInteger(R.integer.battery_ok_percentage_discharging),
+                    resources.getInteger(R.integer.battery_ok_percentage_charging));
+            return new AlertDialog.Builder(this)
+                    .setTitle(R.string.dialog_battery_low_title)
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok, null);
+        }
+        int resId;
+        try {
+            if (Utils.isABUpdate(new File(path))) {
+                resId = R.string.apply_update_dialog_message_ab;
+            } else {
+                resId = R.string.apply_update_dialog_message;
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Could not determine the type of the update");
+            return null;
+        }
+
+        return new AlertDialog.Builder(this)
+                .setTitle(R.string.apply_update_dialog_title)
+                .setMessage(getString(resId, new File(path).getName(),
+                        getString(android.R.string.ok)))
+                .setPositiveButton(android.R.string.ok,
+                        (dialog, which) -> Utils.triggerUpdateWithPath(this, path))
+                .setNegativeButton(android.R.string.cancel, null);
+    }
+
+    private boolean isBatteryLevelOk() {
+        Intent intent = registerReceiver(null,
+                new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (!intent.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false)) {
+            return true;
+        }
+        int percent = Math.round(100.f * intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 100) /
+                intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100));
+        int plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+        int required = (plugged & BatteryManager.BATTERY_PLUGGED_AC) != 0 ?
+                getResources().getInteger(R.integer.battery_ok_percentage_charging) :
+                getResources().getInteger(R.integer.battery_ok_percentage_discharging);
+        return percent >= required;
     }
 }

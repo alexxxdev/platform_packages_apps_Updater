@@ -40,6 +40,7 @@ import org.lineageos.updater.misc.Utils;
 import org.lineageos.updater.model.UpdateInfo;
 import org.lineageos.updater.model.UpdateStatus;
 
+import java.io.File;
 import java.io.IOException;
 import java.text.DateFormat;
 import java.text.NumberFormat;
@@ -53,6 +54,7 @@ public class UpdaterService extends Service {
     public static final String EXTRA_DOWNLOAD_CONTROL = "extra_download_control";
     public static final String ACTION_INSTALL_UPDATE = "action_install_update";
     public static final String ACTION_INSTALL_STOP = "action_install_stop";
+    public static final String EXTRA_PATH = "extra_path";
 
     private static final String ONGOING_NOTIFICATION_CHANNEL =
             "ongoing_notification_channel";
@@ -181,25 +183,43 @@ public class UpdaterService extends Service {
             }
         } else if (ACTION_INSTALL_UPDATE.equals(intent.getAction())) {
             String downloadId = intent.getStringExtra(EXTRA_DOWNLOAD_ID);
-            UpdateInfo update = mUpdaterController.getUpdate(downloadId);
-            if (update.getPersistentStatus() != UpdateStatus.Persistent.VERIFIED) {
-                throw new IllegalArgumentException(update.getDownloadId() + " is not verified");
-            }
-            try {
-                if (Utils.isABUpdate(update.getFile())) {
-                    ABUpdateInstaller installer = ABUpdateInstaller.getInstance(this,
-                            mUpdaterController);
-                    installer.install(downloadId);
-                } else {
-                    UpdateInstaller installer = UpdateInstaller.getInstance(this,
-                            mUpdaterController);
-                    installer.install(downloadId);
+            String path = intent.getStringExtra(EXTRA_PATH);
+            if(downloadId != null) {
+                UpdateInfo update = mUpdaterController.getUpdate(downloadId);
+                if (update.getPersistentStatus() != UpdateStatus.Persistent.VERIFIED) {
+                    throw new IllegalArgumentException(update.getDownloadId() + " is not verified");
                 }
-            } catch (IOException e) {
-                Log.e(TAG, "Could not install update", e);
-                mUpdaterController.getActualUpdate(downloadId)
-                        .setStatus(UpdateStatus.INSTALLATION_FAILED);
-                mUpdaterController.notifyUpdateChange(downloadId);
+                try {
+                    if (Utils.isABUpdate(update.getFile())) {
+                        ABUpdateInstaller installer = ABUpdateInstaller.getInstance(this,
+                                mUpdaterController);
+                        installer.install(downloadId);
+                    } else {
+                        UpdateInstaller installer = UpdateInstaller.getInstance(this,
+                                mUpdaterController);
+                        installer.install(downloadId);
+                    }
+                } catch (IOException e) {
+                    Log.e(TAG, "Could not install update", e);
+                    mUpdaterController.getActualUpdate(downloadId)
+                            .setStatus(UpdateStatus.INSTALLATION_FAILED);
+                    mUpdaterController.notifyUpdateChange(downloadId);
+                }
+            } else if(path != null){
+                try {
+                    if (Utils.isABUpdate(new File(path))) {
+                        ABUpdateInstaller installer = ABUpdateInstaller.getInstance(this,
+                                mUpdaterController);
+                        installer.localInstall(path);
+                    } else {
+                        UpdateInstaller installer = UpdateInstaller.getInstance(this,
+                                mUpdaterController);
+                        installer.localInstall(path);
+                    }
+                } catch (IOException e) {
+                    Log.e(TAG, "Could not install update", e);
+                    mUpdaterController.notifyLocalInstallUpdateChangeFailed(path);
+                }
             }
         } else if (ACTION_INSTALL_STOP.equals(intent.getAction())) {
             if (UpdateInstaller.isInstalling()) {

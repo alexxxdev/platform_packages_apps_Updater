@@ -45,7 +45,10 @@ public class UpdaterController {
     public static final String ACTION_INSTALL_PROGRESS = "action_install_progress";
     public static final String ACTION_UPDATE_REMOVED = "action_update_removed";
     public static final String ACTION_UPDATE_STATUS = "action_update_status_change";
+    public static final String ACTION_LOCAL_UPDATE_FAILED = "action_local_update_failed";
+    public static final String ACTION_LOCAL_UPDATE_SUCCESS = "action_local_update_success";
     public static final String EXTRA_DOWNLOAD_ID = "extra_download_id";
+    public static final String EXTRA_PATH = "extra_path";
 
     private final String TAG = "UpdaterController";
 
@@ -105,6 +108,20 @@ public class UpdaterController {
         Intent intent = new Intent();
         intent.setAction(ACTION_UPDATE_STATUS);
         intent.putExtra(EXTRA_DOWNLOAD_ID, downloadId);
+        mBroadcastManager.sendBroadcast(intent);
+    }
+
+    void notifyLocalInstallUpdateChangeFailed(String path) {
+        Intent intent = new Intent();
+        intent.setAction(ACTION_LOCAL_UPDATE_FAILED);
+        intent.putExtra(EXTRA_PATH, path);
+        mBroadcastManager.sendBroadcast(intent);
+    }
+
+    void notifyLocalInstallUpdateChangeSuccess(String path) {
+        Intent intent = new Intent();
+        intent.setAction(ACTION_LOCAL_UPDATE_SUCCESS);
+        intent.putExtra(EXTRA_PATH, path);
         mBroadcastManager.sendBroadcast(intent);
     }
 

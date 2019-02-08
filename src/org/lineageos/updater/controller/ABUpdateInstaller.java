@@ -217,6 +217,63 @@ class ABUpdateInstaller {
         return true;
     }
 
+    public boolean localInstall(String path){
+        File file = new File(path);
+
+        if (!file.exists()) {
+            Log.e(TAG, "The given update doesn't exist");
+            mUpdaterController.notifyLocalInstallUpdateChangeFailed(path);
+            return false;
+        }
+
+        long offset;
+        String[] headerKeyValuePairs;
+        try {
+            ZipFile zipFile = new ZipFile(file);
+            offset = Utils.getZipEntryOffset(zipFile, Constants.AB_PAYLOAD_BIN_PATH);
+            ZipEntry payloadPropEntry = zipFile.getEntry(Constants.AB_PAYLOAD_PROPERTIES_PATH);
+            try (InputStream is = zipFile.getInputStream(payloadPropEntry);
+                 InputStreamReader isr = new InputStreamReader(is);
+                 BufferedReader br = new BufferedReader(isr)) {
+                List<String> lines = new ArrayList<>();
+                for (String line; (line = br.readLine()) != null;) {
+                    lines.add(line);
+                }
+                headerKeyValuePairs = new String[lines.size()];
+                headerKeyValuePairs = lines.toArray(headerKeyValuePairs);
+            }
+            zipFile.close();
+        } catch (IOException | IllegalArgumentException e) {
+            Log.e(TAG, "Could not prepare " + file, e);
+            mUpdaterController.notifyLocalInstallUpdateChangeFailed(path);
+            return false;
+        }
+
+        if (!mBound) {
+            mBound = mUpdateEngine.bind(mUpdateEngineCallback);
+            if (!mBound) {
+                Log.e(TAG, "Could not bind");
+                mUpdaterController.notifyLocalInstallUpdateChangeFailed(path);
+                return false;
+            }
+        }
+
+        boolean enableABPerfMode = PreferenceManager.getDefaultSharedPreferences(mContext)
+                .getBoolean(Constants.PREF_AB_PERF_MODE, false);
+        mUpdateEngine.setPerformanceMode(enableABPerfMode);
+
+        String zipFileUri = "file://" + file.getAbsolutePath();
+        mUpdateEngine.applyPayload(zipFileUri, offset, 0, headerKeyValuePairs);
+
+        mUpdaterController.notifyLocalInstallUpdateChangeSuccess(path);
+
+        PreferenceManager.getDefaultSharedPreferences(mContext).edit()
+                .putString(PREF_INSTALLING_AB_ID, mDownloadId)
+                .apply();
+
+        return true;
+    }
+
     public boolean reconnect() {
         if (!isInstallingUpdate(mContext)) {
             Log.e(TAG, "reconnect: Not installing any update");
