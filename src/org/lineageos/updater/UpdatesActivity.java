@@ -71,7 +71,9 @@ import org.lineageos.updater.misc.Constants;
 import org.lineageos.updater.misc.FileUtils;
 import org.lineageos.updater.misc.StringGenerator;
 import org.lineageos.updater.misc.Utils;
+import org.lineageos.updater.model.Update;
 import org.lineageos.updater.model.UpdateInfo;
+import org.lineageos.updater.model.UpdateStatus;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -494,61 +496,52 @@ public class UpdatesActivity extends UpdatesListActivity {
             Uri uri = null;
             if (resultData != null) {
                 uri = resultData.getData();
-                startLocalInstall(uri);
+                String path = FileUtils.getRealPath(this, uri);
+                Update localUpdate = new Update();
+                File file = new File(path);
+                localUpdate.setFile(file);
+                localUpdate.setName(file.getName());
+                localUpdate.setFileSize(file.length());
+                localUpdate.setTimestamp(new Date().getTime()/1000L);
+                localUpdate.setDownloadId(String.valueOf(new Date().getTime()/1000L));
+                localUpdate.setVersion("Unknown");
+                localUpdate.setPersistentStatus(UpdateStatus.Persistent.LOCAL);
+                localUpdate.setStatus(UpdateStatus.DOWNLOADED);
+
+                Log.d(TAG, "Adding local updates");
+                UpdaterController controller = mUpdaterService.getUpdaterController();
+                boolean newUpdates = false;
+
+                List<UpdateInfo> updates = new ArrayList<>();
+                updates.add(localUpdate);
+                List<String> updatesOnline = new ArrayList<>();
+                for (UpdateInfo update : updates) {
+                    newUpdates |= controller.addUpdate(update);
+                    updatesOnline.add(0, update.getDownloadId());
+                }
+
+                controller.setUpdatesAvailableOnline(updatesOnline, false);
+
+                controller.verifyUpdateAsync(localUpdate.getDownloadId());
+                controller.notifyUpdateChange(localUpdate.getDownloadId());
+
+                List<String> updateIds = new ArrayList<>();
+                List<UpdateInfo> sortedUpdates = controller.getUpdates();
+                if (sortedUpdates.isEmpty()) {
+                    findViewById(R.id.no_new_updates_view).setVisibility(View.VISIBLE);
+                    findViewById(R.id.recycler_view).setVisibility(View.GONE);
+                } else {
+                    findViewById(R.id.no_new_updates_view).setVisibility(View.GONE);
+                    findViewById(R.id.recycler_view).setVisibility(View.VISIBLE);
+                    sortedUpdates.sort((u1, u2) -> Long.compare(u2.getTimestamp(), u1.getTimestamp()));
+                    for (UpdateInfo update : sortedUpdates) {
+                        updateIds.add(update.getDownloadId());
+                    }
+                    mAdapter.setData(updateIds);
+                    mAdapter.notifyDataSetChanged();
+                }
             }
         }
         super.onActivityResult(requestCode, resultCode, resultData);
-    }
-
-    private void startLocalInstall(Uri uri) {
-        String path = FileUtils.getRealPath(this, uri);
-        getInstallDialog(path).show();
-    }
-
-    private AlertDialog.Builder getInstallDialog(final String path) {
-        if (!isBatteryLevelOk()) {
-            Resources resources = getResources();
-            String message = resources.getString(R.string.dialog_battery_low_message_pct,
-                    resources.getInteger(R.integer.battery_ok_percentage_discharging),
-                    resources.getInteger(R.integer.battery_ok_percentage_charging));
-            return new AlertDialog.Builder(this)
-                    .setTitle(R.string.dialog_battery_low_title)
-                    .setMessage(message)
-                    .setPositiveButton(android.R.string.ok, null);
-        }
-        int resId;
-        try {
-            if (Utils.isABUpdate(new File(path))) {
-                resId = R.string.apply_update_dialog_message_ab;
-            } else {
-                resId = R.string.apply_update_dialog_message;
-            }
-        } catch (IOException e) {
-            Log.e(TAG, "Could not determine the type of the update");
-            return null;
-        }
-
-        return new AlertDialog.Builder(this)
-                .setTitle(R.string.apply_update_dialog_title)
-                .setMessage(getString(resId, new File(path).getName(),
-                        getString(android.R.string.ok)))
-                .setPositiveButton(android.R.string.ok,
-                        (dialog, which) -> Utils.triggerUpdateWithPath(this, path))
-                .setNegativeButton(android.R.string.cancel, null);
-    }
-
-    private boolean isBatteryLevelOk() {
-        Intent intent = registerReceiver(null,
-                new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        if (!intent.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false)) {
-            return true;
-        }
-        int percent = Math.round(100.f * intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 100) /
-                intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100));
-        int plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
-        int required = (plugged & BatteryManager.BATTERY_PLUGGED_AC) != 0 ?
-                getResources().getInteger(R.integer.battery_ok_percentage_charging) :
-                getResources().getInteger(R.integer.battery_ok_percentage_discharging);
-        return percent >= required;
     }
 }
